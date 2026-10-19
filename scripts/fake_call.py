@@ -125,6 +125,8 @@ def main():
         if m:
             lines.append({"speaker": m[1], "text": m[2], "t": arrived - t0})
             print(f"{arrived - t0:6.2f}s  {raw.strip()}", flush=True)
+        elif raw.strip():
+            print(f"{arrived - t0:6.2f}s  answer: {raw.strip()}", flush=True)  # from ⌘⏎
     app.wait()
 
     for p in players.values():

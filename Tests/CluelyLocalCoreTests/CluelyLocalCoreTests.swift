@@ -16,10 +16,10 @@ private func feed(_ segmenter: inout Segmenter, _ probability: Double, frames co
 struct SegmenterTests {
     let config = VADConfig()
 
-    @Test("Cluely's settings in frames: 800 ms pad, 1.4 s redemption, 400 ms minimum, 20 s cap")
+    @Test("Cluely's settings in frames: 300 ms pad, 300 ms redemption, 400 ms minimum, 20 s cap")
     func frameCounts() {
-        #expect(config.frames(config.preSpeechPadMs) == 25)
-        #expect(config.frames(config.redemptionMs) == 44)
+        #expect(config.frames(config.preSpeechPadMs) == 10)
+        #expect(config.frames(config.redemptionMs) == 10)
         #expect(config.frames(config.minSpeechMs) == 13)
         #expect(config.frames(config.maxClipMs) == 625)
     }
@@ -31,30 +31,30 @@ struct SegmenterTests {
         #expect(!segmenter.isSpeaking)
     }
 
-    @Test("a clip closes 1.4 s after the last speech frame, not before")
+    @Test("a clip closes 300 ms after the last speech frame, not before")
     func redemption() throws {
         var segmenter = Segmenter()
         var (clips, next) = feed(&segmenter, 0, frames: 30)
         (clips, next) = feed(&segmenter, 0.9, frames: 31, from: next)      // ~1 s of speech
-        (clips, next) = feed(&segmenter, 0.1, frames: 43, from: next)      // one frame short
+        (clips, next) = feed(&segmenter, 0.1, frames: 9, from: next)       // one frame short
         #expect(clips.isEmpty)
         (clips, _) = feed(&segmenter, 0.1, frames: 1, from: next)
         let clip = try #require(clips.first)
-        #expect(abs(clip.closedTime - clip.speechEndTime - 44 * 0.032) < 1e-9)
+        #expect(abs(clip.closedTime - clip.speechEndTime - 10 * 0.032) < 1e-9)
         #expect(clip.speechFrames == 31)
         #expect(!clip.capped)
     }
 
-    @Test("keeps 800 ms of audio from before speech started")
+    @Test("keeps 300 ms of audio from before speech started")
     func preSpeechPad() throws {
         var segmenter = Segmenter()
         var (_, next) = feed(&segmenter, 0, frames: 40)
         var clips: [Clip]
         (_, next) = feed(&segmenter, 0.9, frames: 20, from: next)
-        (clips, _) = feed(&segmenter, 0, frames: 44, from: next)
+        (clips, _) = feed(&segmenter, 0, frames: 10, from: next)
         let clip = try #require(clips.first)
-        #expect(clip.samples.count == (25 + 20 + 44) * 512)
-        #expect(clip.samples.first == 15)  // frames 15...39 were the pad
+        #expect(clip.samples.count == (10 + 20 + 10) * 512)
+        #expect(clip.samples.first == 30)  // frames 30...39 were the pad
     }
 
     @Test("drops misfires under 400 ms of speech", arguments: [(12, false), (13, true)])
@@ -104,10 +104,21 @@ struct EnergyScorerTests {
         #expect(scorer.probability(tone) == 1)
     }
 
-    @Test("a steady hum becomes the noise floor and stops counting as speech")
-    func adaptsToHum() {
+    @Test("a noisy room at launch is the noise floor straight away, not speech")
+    func startsAtRoomLevel() {
         var scorer = EnergyScorer()
         let hum = (0..<512).map { Float(sin(Double($0) * 0.05) * 0.01) }  // about -43 dBFS
+        let scores = (0..<50).map { _ in scorer.probability(hum) }
+        #expect(scores.allSatisfy { $0 < 0.25 })
+        let voice = (0..<512).map { Float(sin(Double($0) * 0.2) * 0.3) }  // about 29 dB louder
+        #expect(scorer.probability(voice) >= 0.3)
+    }
+
+    @Test("a hum that starts later becomes the floor and stops counting as speech")
+    func adaptsToHum() {
+        var scorer = EnergyScorer()
+        _ = scorer.probability([Float](repeating: 0.0001, count: 512))  // a quiet room first
+        let hum = (0..<512).map { Float(sin(Double($0) * 0.05) * 0.01) }
         let first = scorer.probability(hum)
         var last = first
         for _ in 0..<5_000 { last = scorer.probability(hum) }
@@ -162,7 +173,7 @@ struct ConversationTests {
         #expect(conversation.droppedMicFrames == 100 + 9)  // plus the 300 ms echo tail
     }
 
-    @Test("reopens the mic 300 ms after Them goes quiet, not 1.4 s, so a quick reply is kept")
+    @Test("reopens the mic 300 ms after Them goes quiet, so a quick reply is kept")
     func quickReply() {
         var conversation = Conversation()
         var t = 0
@@ -181,6 +192,17 @@ struct ConversationTests {
         var clips = both(&conversation, them: 0.9, me: 0.9, frames: 30, at: &t)
         clips += both(&conversation, them: 0, me: 0, frames: 60, at: &t)
         #expect(Set(clips.map(\.speaker)) == [.them, .me])
+    }
+
+    @Test("asking mid-question cuts Them's clip now, instead of waiting for the pause")
+    func cutOnAsk() {
+        var conversation = Conversation()
+        var t = 0
+        let before = push(&conversation, .them, 0.9, frames: 40, at: &t)  // still talking
+        #expect(before.isEmpty)
+        let cut = conversation.flush(time: Double(t) * 0.032)
+        #expect(cut.map(\.speaker) == [.them])
+        #expect(cut.first?.clip.capped == false)
     }
 
     @Test("Me mid-sentence when Them starts: the Me clip is closed and kept")
@@ -245,6 +267,13 @@ struct TranscriptTests {
         #expect(Transcript.recent(lines, now: start).count == 2)
     }
 
+    @Test("puts lines back in spoken order: a short reply can be transcribed before a longer line said first")
+    func spokenOrder() {
+        let long = TranscriptLine(date: start.addingTimeInterval(-20), speaker: .them, text: "A long question")
+        let reply = TranscriptLine(date: start.addingTimeInterval(-5), speaker: .me, text: "Yes")
+        #expect(Transcript.recent([reply, long], now: start) == [long, reply])
+    }
+
     @Test("strips whisper's silence markers")
     func clean() {
         #expect(Transcript.clean(" [BLANK_AUDIO]\n") == "")
@@ -269,6 +298,20 @@ struct PromptTests {
         #expect(prompt.contains("/tmp/s.png"))
         #expect(prompt.contains("- [00:00:00] Them: What's your price?"))
         #expect(prompt.hasSuffix("How do I answer?"))
+    }
+
+    @Test("tells the model to answer Them's latest question, even if it's cut off")
+    func findsTheQuestion() {
+        let prompt = AskPrompt.build(question: "", transcript: [], screen: .none)
+        #expect(prompt.contains("If Them's latest lines ask me something"))
+        #expect(prompt.contains("stops mid-sentence"))
+    }
+
+    @Test("each mode adds its own instructions", arguments: Mode.allCases)
+    func modes(mode: Mode) {
+        let prompt = AskPrompt.build(question: "q", transcript: [], screen: .none, mode: mode)
+        #expect(prompt.contains(mode.instructions))
+        #expect(prompt.contains("complexity") == (mode == .coding))
     }
 
     @Test("falls back to the default question and says when nothing was heard")
@@ -311,6 +354,22 @@ struct OptionsTests {
     func ask() throws {
         #expect(try Options.parse(["ask", "what's their budget?"]).command == .ask(question: "what's their budget?"))
         #expect(try Options.parse(["ask", "--no-window"]).command == .ask(question: ""))
+    }
+
+    @Test("the question can be unquoted and come after flags")
+    func unquotedQuestion() throws {
+        let options = try Options.parse(["ask", "--no-window", "--mode", "coding", "what", "is", "the", "runtime?"])
+        #expect(options.command == .ask(question: "what is the runtime?"))
+        #expect(!options.window && options.mode == .coding)
+        #expect(try Options.parse(["ask", "--", "-1", "or", "0?"]).command == .ask(question: "-1 or 0?"))
+    }
+
+    @Test("parses modes and rejects unknown ones")
+    func modes() throws {
+        #expect(try Options.parse([]).mode == .general)
+        #expect(try Options.parse(["--mode", "sales"]).mode == .sales)
+        #expect(throws: Options.ParseError.badValue("--mode", "stealth")) { try Options.parse(["--mode", "stealth"]) }
+        #expect(throws: Options.ParseError.unknownFlag("stray")) { try Options.parse(["stray"]) }
     }
 
     @Test("parses listen flags")

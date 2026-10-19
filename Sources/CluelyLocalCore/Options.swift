@@ -18,6 +18,7 @@ public struct Options: Equatable, Sendable {
     public var seconds: Double?
     public var file: String?
     public var window = true
+    public var mode = Mode.general
     public var showHelp = false
 
     public init() {}
@@ -28,11 +29,14 @@ public struct Options: Equatable, Sendable {
     cluely-local: a local meeting copilot. Transcribes your call into transcript.md and answers questions about it.
 
     Usage:
-      swift run -c release cluely-local [options]       Listen: mic is "Me", whatever your Mac plays is "Them"
-      swift run -c release cluely-local ask ["question"] Screenshot + last 5 minutes + question to Claude
+      cluely-local [options]             Listen: mic is "Me", whatever your Mac plays is "Them"
+      cluely-local ask [question]        Screenshot + last 5 minutes + question to Claude
 
-    While listening, press ⌘⏎ (Command-Return) to ask "\(AskPrompt.defaultQuestion)"
+    While listening, press ⌘⏎ (Command-Return) for help with whatever is happening, usually the
+    question they just asked. The clip in progress is cut and transcribed first.
 
+    Both:
+      --mode <name>     general, sales, interview or coding (default: general)
     Listen options:
       --lang <code>     Spoken language, e.g. en, es, auto (default: en)
       --no-mic          Only transcribe Them
@@ -66,14 +70,10 @@ public struct Options: Equatable, Sendable {
     public static func parse(_ arguments: [String]) throws -> Options {
         var options = Options()
         var remaining = arguments[...]
+        var question: [String]?
         if remaining.first == "ask" {
             remaining = remaining.dropFirst()
-            var question = ""
-            if let next = remaining.first, !next.hasPrefix("-") {
-                question = next
-                remaining = remaining.dropFirst()
-            }
-            options.command = .ask(question: question)
+            question = []
         } else if remaining.first == "listen" {
             remaining = remaining.dropFirst()
         }
@@ -100,10 +100,19 @@ public struct Options: Equatable, Sendable {
             case "--seconds": options.seconds = try number(arg, Double.self)
             case "--file": options.file = try value(arg)
             case "--no-window": options.window = false
+            case "--mode":
+                let raw = try value(arg)
+                guard let mode = Mode(rawValue: raw) else { throw ParseError.badValue(arg, raw) }
+                options.mode = mode
             case "-h", "--help": options.showHelp = true
-            default: throw ParseError.unknownFlag(arg)
+            case "--": question?.append(contentsOf: remaining); remaining = []
+            default:
+                // After `ask`, anything that isn't a flag is part of the question, so it needn't be quoted.
+                guard question != nil, !arg.hasPrefix("-") else { throw ParseError.unknownFlag(arg) }
+                question?.append(arg)
             }
         }
+        if let question { options.command = .ask(question: question.joined(separator: " ")) }
         return options
     }
 }

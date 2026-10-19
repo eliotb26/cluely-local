@@ -31,17 +31,19 @@ final class Listener {
         self.backlog = Backlog(policy: options.policy)
     }
 
-    func start() throws {
+    /// `onStreamDied` is called on a background queue if audiotee or ffmpeg stops on its own: a revoked
+    /// permission, an unplugged mic. Transcription for that side has stopped, so the caller should say so.
+    func start(onStreamDied: @escaping (Speaker, Int32) -> Void) throws {
         try appendToTranscript("\n\(Transcript.header(Date()))\n\n")
         var all = [AudioStream.them(audiotee: audiotee, pid: options.themPID, mute: options.muteThem,
                                     frameSamples: config.frameSamples)]
         if options.mic { all.append(.me(device: options.micDevice, frameSamples: config.frameSamples)) }
         for stream in all {
             let speaker = stream.speaker
-            try stream.start(on: vadQueue) { [weak self] frame, time in
+            try stream.start(on: vadQueue, onFrame: { [weak self] frame, time in
                 guard let self else { return }
                 self.dispatch(self.conversation.push(speaker, frame: frame, time: time), note: "live")
-            }
+            }, onDeath: { status in onStreamDied(speaker, status) })
         }
         streams = all
     }
@@ -65,6 +67,16 @@ final class Listener {
                 dispatch(conversation.push(.them, frame: frame, time: time), note: "file")
             }
             dispatch(conversation.flush(time: start + Double(offset) / Double(config.sampleRate)), note: "file")
+        }
+    }
+
+    /// Ends whatever is being said right now and calls `done` once it, and every clip queued before it,
+    /// is in transcript.md. Cluely does the same when you ask: it ends both VAD segments and sends the
+    /// unfinished audio with the question, so a question still being asked isn't missed.
+    func cut(done: @escaping () -> Void) {
+        vadQueue.async {
+            self.dispatch(self.conversation.flush(time: Date().timeIntervalSince1970), note: "cut")
+            self.work.async(execute: done)  // `work` is serial, so this runs after those clips
         }
     }
 
@@ -120,7 +132,7 @@ final class Listener {
             record.audioSeconds = item.clip.seconds
             record.whisperMs = whisperMs
             record.queued = queued
-            if note == "live" { record.lagMs = Int((Date().timeIntervalSince1970 - item.clip.speechEndTime) * 1000) }
+            if note != "file" { record.lagMs = Int((Date().timeIntervalSince1970 - item.clip.speechEndTime) * 1000) }
             try? timingLog.append(record)
         } catch {
             log("\(item.speaker.rawValue) clip failed: \(error)")
@@ -128,9 +140,7 @@ final class Listener {
     }
 
     private func appendToTranscript(_ text: String) throws {
-        if !FileManager.default.fileExists(atPath: transcriptURL.path) {
-            try Data().write(to: transcriptURL)
-        }
+        try createPrivateFile(transcriptURL)
         let handle = try FileHandle(forWritingTo: transcriptURL)
         defer { try? handle.close() }
         try handle.seekToEnd()

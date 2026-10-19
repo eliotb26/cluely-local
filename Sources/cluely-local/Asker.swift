@@ -7,6 +7,9 @@ enum Asker {
     static let timeout: TimeInterval = 60
     static let screenshotMaxPixels = 1_600  // larger images cost tokens without helping
     static let apiModel = ProcessInfo.processInfo.environment["CLUELY_API_MODEL"] ?? "claude-haiku-4-5"
+    static let apiMaxTokens = 1_200  // room for code in coding mode
+    /// Set and non-empty: answers come from the API instead of the Claude Code CLI.
+    static let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"].flatMap { $0.isEmpty ? nil : $0 }
 
     struct Answer {
         var text = ""
@@ -18,7 +21,7 @@ enum Asker {
     }
 
     /// `screenshotTaken` runs once the screen is captured, so a "Thinking…" panel stays out of the shot.
-    static func ask(_ question: String, transcriptURL: URL, screenshotTaken: () -> Void = {}) throws -> Answer {
+    static func ask(_ question: String, mode: Mode, transcriptURL: URL, screenshotTaken: () -> Void = {}) throws -> Answer {
         var answer = Answer()
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cluely-local-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -40,21 +43,24 @@ enum Asker {
         let recent = Transcript.recent(Transcript.parse(markdown), now: Date(), window: AskPrompt.transcriptWindow)
 
         let llmStarted = Date()
-        if let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !key.isEmpty {
-            let prompt = AskPrompt.build(question: question, transcript: recent, screen: hasShot ? .attached : .none)
+        if let key = apiKey {
+            let prompt = AskPrompt.build(question: question, transcript: recent, screen: hasShot ? .attached : .none, mode: mode)
             try askAPI(prompt, image: hasShot ? shot : nil, key: key, into: &answer)
         } else {
-            let prompt = AskPrompt.build(question: question, transcript: recent, screen: hasShot ? .file(shot.path) : .none)
+            let prompt = AskPrompt.build(question: question, transcript: recent, screen: hasShot ? .file(shot.path) : .none,
+                                         mode: mode)
             try askCLI(prompt, cwd: dir, into: &answer)
         }
         answer.llmMs = milliseconds(since: llmStarted)
         return answer
     }
 
-    /// `claude -p` with only the Read tool, so it can open the screenshot. MCP servers are skipped for speed.
+    /// `claude -p` with only the Read tool, allowed on the screenshot alone, so words spoken on the call
+    /// can't talk it into opening other files. MCP servers are skipped for speed, and the session isn't
+    /// saved to Claude Code's history, so the transcript only lives in transcript.md.
     private static func askCLI(_ prompt: String, cwd: URL, into answer: inout Answer) throws {
-        let output = try run(["claude", "-p", "--model", "haiku", "--strict-mcp-config",
-                              "--tools", "Read", "--allowedTools", "Read", "--output-format", "json"],
+        let output = try run(["claude", "-p", "--model", "haiku", "--strict-mcp-config", "--no-session-persistence",
+                              "--tools", "Read", "--allowedTools", "Read(./screen.png)", "--output-format", "json"],
                              stdin: prompt, cwd: cwd, timeout: timeout)
         guard let json = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any] else {
             throw AppError.process("claude returned no JSON")
@@ -82,7 +88,7 @@ enum Asker {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": apiModel, "max_tokens": 400, "messages": [["role": "user", "content": content]],
+            "model": apiModel, "max_tokens": apiMaxTokens, "messages": [["role": "user", "content": content]],
         ])
 
         let done = DispatchSemaphore(value: 0)
@@ -108,7 +114,7 @@ enum Asker {
 
     static func record(_ answer: Answer, totalMs: Int) -> TimingRecord {
         var record = TimingRecord(date: Date(), kind: .ask,
-                                  note: ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] == nil ? "cli" : "api")
+                                  note: apiKey == nil ? "cli" : "api")
         record.screenshotMs = answer.screenshotMs
         record.llmMs = answer.llmMs
         record.totalMs = totalMs

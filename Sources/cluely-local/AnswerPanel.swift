@@ -1,13 +1,19 @@
 import AppKit
 
-/// A small always-on-top panel for the answer.
+/// A small always-on-top panel for the answer. It hides itself `hideAfter` seconds after an answer,
+/// so an old answer isn't left on screen (or in the next screenshot).
 /// Unlike Cluely's overlay, it is visible in screen shares and recordings: sharingType is left at its default.
 final class AnswerPanel {
-    static let width: CGFloat = 420
+    static let width: CGFloat = 460
     static let margin: CGFloat = 24
+    static let inset: CGFloat = 14
+    /// Long answers (code) scroll instead of running off the screen.
+    static let maxScreenFraction: CGFloat = 0.7
 
     private let panel: NSPanel
-    private let label = NSTextField(wrappingLabelWithString: "")
+    private let scroll = NSScrollView()
+    private let text = NSTextView()
+    private var hideTimer: Timer?
 
     init() {
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 120),
@@ -19,32 +25,54 @@ final class AnswerPanel {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        label.font = .systemFont(ofSize: 14)
-        label.isSelectable = true
-        label.translatesAutoresizingMaskIntoConstraints = false
-        let content = NSView()
-        content.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            label.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
-            label.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
-            label.widthAnchor.constraint(equalToConstant: Self.width - 32),
-        ])
-        panel.contentView = content
+        text.isEditable = false
+        text.isSelectable = true
+        text.drawsBackground = false
+        text.font = .systemFont(ofSize: 14)
+        text.textContainerInset = NSSize(width: Self.inset, height: Self.inset)
+        text.textContainer?.widthTracksTextView = true
+        text.isVerticallyResizable = true
+        text.autoresizingMask = [.width]
+        scroll.documentView = text
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        panel.contentView = scroll
     }
 
     var window: NSWindow { panel }
 
     /// Call on the main thread.
-    func show(_ text: String) {
-        label.stringValue = text
-        panel.contentView?.layoutSubtreeIfNeeded()
-        panel.setContentSize(panel.contentView?.fittingSize ?? NSSize(width: Self.width, height: 120))
-        if let screen = NSScreen.main?.visibleFrame {
-            panel.setFrameTopLeftPoint(NSPoint(x: screen.maxX - panel.frame.width - Self.margin,
-                                               y: screen.maxY - Self.margin))
-        }
+    func hide() {
+        hideTimer?.invalidate()
+        hideTimer = nil
+        panel.orderOut(nil)
+    }
+
+    /// Shows `message`. With `hideAfter`, hides it that many seconds later unless something newer is shown.
+    /// Call on the main thread.
+    func show(_ message: String, hideAfter: TimeInterval? = nil) {
+        hideTimer?.invalidate()
+        hideTimer = nil
+        // Code reads better in a fixed-width font.
+        text.font = message.contains("```") || message.contains("    ")
+            ? .monospacedSystemFont(ofSize: 12.5, weight: .regular) : .systemFont(ofSize: 14)
+        text.string = message
+
+        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        text.frame.size.width = Self.width
+        text.layoutManager?.ensureLayout(for: text.textContainer!)
+        let used = text.layoutManager?.usedRect(for: text.textContainer!).height ?? 80
+        let height = min(used + Self.inset * 2, screen.height * Self.maxScreenFraction)
+        panel.setContentSize(NSSize(width: Self.width, height: height))
+        panel.setFrameTopLeftPoint(NSPoint(x: screen.maxX - panel.frame.width - Self.margin, y: screen.maxY - Self.margin))
+        text.scrollToBeginningOfDocument(nil)
         panel.orderFrontRegardless()
+
+        if let hideAfter {
+            hideTimer = Timer.scheduledTimer(withTimeInterval: hideAfter, repeats: false) { [weak self] _ in
+                self?.panel.orderOut(nil)
+            }
+        }
     }
 }

@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- Hero for the README. Numbers are run E in docs/runs-m4-pro.csv. Render: scripts in docs/src/render.sh -->
+<html><head><meta charset="utf-8"><style>
+:root { --bg:#FFFFFF; --ink:#1D1D1F; --gray:#6E6E73; --line:#E8E8ED; --accent:#0071E3; }
+:root.dark { --bg:#0D0D0F; --ink:#F5F5F7; --gray:#98989D; --line:#2C2C2E; --accent:#2997FF; }
+* { margin:0; box-sizing:border-box; }
+html, body { width:800px; height:400px; background:var(--bg); }
+body { font-family:system-ui, -apple-system, sans-serif; color:var(--ink); padding:34px 44px 0; position:relative;
+       -webkit-font-smoothing:antialiased; font-feature-settings:"tnum"; }
+.eyebrow { font-size:12px; font-weight:600; color:var(--accent); letter-spacing:.01em; }
+h1 { font-size:34px; font-weight:700; letter-spacing:-.035em; line-height:1.1; margin-top:10px; }
+h1 span { color:var(--gray); }
+.lines { margin-top:26px; font-size:15px; line-height:1.55; }
+.row { display:flex; gap:14px; }
+.who { width:40px; color:var(--gray); font-weight:600; font-size:13px; padding-top:1px; }
+.past { color:var(--gray); }
+.cut { position:relative; }
+.mark { display:inline-block; width:2px; height:19px; background:var(--accent); vertical-align:-4px; margin-left:3px; }
+.key { color:var(--accent); font-weight:600; font-size:13px; margin-left:8px; }
+.strip { position:absolute; left:44px; right:44px; top:246px; }
+.bar { display:flex; height:6px; border-radius:3px; overflow:hidden; background:var(--line); }
+.seg { height:100%; }
+.labels { position:relative; height:44px; margin-top:12px; font-size:12px; color:var(--gray); }
+.labels div { position:absolute; top:0; }
+.labels b { display:block; font-size:13px; font-weight:600; color:var(--ink); }
+.labels .acc b { color:var(--accent); }
+footer { position:absolute; left:44px; right:44px; bottom:22px; display:flex; justify-content:space-between; font-size:12px; color:var(--gray); }
+footer b { color:var(--ink); font-weight:600; }
+</style></head><body>
+<div class="eyebrow">Pressed ⌘⏎ while they were still asking</div>
+<h1>The half-asked question gets answered.<br><span>No waiting for them to finish.</span></h1>
+<div class="lines">
+  <div class="row past"><div class="who">Them</div><div>That's more than we budgeted. Is there any discount if we sign for two years?</div></div>
+  <div class="row"><div class="who">Them</div><div class="cut">Okay, and does that include single sign<span class="mark"></span><span class="key">⌘⏎</span></div></div>
+</div>
+<div class="strip">
+  <div class="bar">
+    <div class="seg" style="width:12.0%;background:var(--accent)"></div>
+    <div class="seg" style="width:2.3%;background:var(--line)"></div>
+    <div class="seg" style="width:85.7%;background:var(--ink)"></div>
+  </div>
+  <div class="labels">
+    <div class="acc" style="left:0"><b>1.07 s</b>clip cut and transcribed</div>
+    <div style="left:31%"><b>7.63 s</b>Claude reads the screen and transcript</div>
+    <div style="right:0;text-align:right"><b>8.89 s</b>answer on screen</div>
+  </div>
+</div>
+<footer><div>One real run on an M4 Pro · docs/runs-m4-pro.csv, run E</div><b>cluely-local</b></footer>
+</body></html>

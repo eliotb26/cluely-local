@@ -10,7 +10,8 @@ final class AudioStream {
     private let process = Process()
     private let frameBytes: Int
     private var pending = Data()
-    private var stopping = false
+    private let lock = NSLock()
+    private var stopping = false // read by the termination handler on another thread
 
     init(speaker: Speaker, arguments: [String], frameSamples: Int) {
         self.speaker = speaker
@@ -33,8 +34,10 @@ final class AudioStream {
                     frameSamples: frameSamples)
     }
 
-    /// Calls `onFrame` on `queue` with each frame and the wall-clock time its last sample was captured.
-    func start(on queue: DispatchQueue, onFrame: @escaping ([Float], Double) -> Void) throws {
+    /// Calls `onFrame` on `queue` with each frame and the wall-clock time its last sample was captured,
+    /// and `onDeath` with the exit status if the process stops without being asked to.
+    func start(on queue: DispatchQueue, onFrame: @escaping ([Float], Double) -> Void,
+               onDeath: @escaping (Int32) -> Void) throws {
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -44,25 +47,27 @@ final class AudioStream {
             let arrived = Date().timeIntervalSince1970
             queue.async { self?.consume(data, arrived: arrived, onFrame: onFrame) }
         }
+        var partial = ""
         err.fileHandleForReading.readabilityHandler = { handle in
-            // audiotee logs JSON lines; surface only errors.
-            for line in String(decoding: handle.availableData, as: UTF8.self).split(separator: "\n")
-            where line.contains("\"error\"") || !line.hasPrefix("{") {
+            // audiotee logs JSON lines; surface only errors. A read can end mid-line, so keep the tail.
+            partial += String(decoding: handle.availableData, as: UTF8.self)
+            var lines = partial.split(separator: "\n", omittingEmptySubsequences: false)
+            partial = String(lines.removeLast())
+            for line in lines where !line.isEmpty && (line.contains("\"error\"") || !line.hasPrefix("{")) {
                 log("\(name) audio: \(line.prefix(300))")
             }
         }
         process.terminationHandler = { [weak self] process in
             out.fileHandleForReading.readabilityHandler = nil
             err.fileHandleForReading.readabilityHandler = nil
-            if self?.stopping != true {
-                log("\(name) audio stopped with status \(process.terminationStatus)")
-            }
+            guard let self, !self.lock.withLock({ self.stopping }) else { return }
+            onDeath(process.terminationStatus)
         }
         try process.run()
     }
 
     func stop() {
-        stopping = true
+        lock.withLock { stopping = true }
         if process.isRunning { process.terminate() }
     }
 

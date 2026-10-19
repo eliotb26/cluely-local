@@ -9,7 +9,7 @@ public struct TimingRecord: Equatable, Sendable {
     public var speaker: Speaker?
     public var audioSeconds: Double?
     public var whisperMs: Int?
-    /// Clip: last speech frame to transcript line written. Includes the 1.4 s quiet the VAD waits for.
+    /// Clip: last speech frame to transcript line written. Includes the 300 ms quiet the VAD waits for.
     public var lagMs: Int?
     /// Clip: clips waiting or in whisper when this one was queued, itself included.
     public var queued: Int?

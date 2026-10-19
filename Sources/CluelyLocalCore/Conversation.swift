@@ -16,8 +16,8 @@ public struct SpeakerClip: Equatable, Sendable {
 /// are dropped, so the call bouncing back into your mic isn't transcribed as you. A Me clip in
 /// progress when the gate closes is ended and kept, not thrown away.
 ///
-/// Cluely gates on Them's VAD state instead, which stays "speaking" through the 1.4 s quiet it waits
-/// for before closing a clip. In a quick back-and-forth that swallows the start of your reply.
+/// Cluely does the same with its `themHasVoiceActivity` flag: while Them's VAD is mid-clip, mic audio
+/// is replaced with silence, and the flag clears when the clip ends, 300 ms after their voice stops.
 public struct Conversation: Sendable {
     public static let defaultEchoTail = 0.3
 
@@ -72,7 +72,8 @@ public struct Conversation: Sendable {
         }
     }
 
-    /// Closes both streams, e.g. at the end of a file or on quit.
+    /// Closes both streams: at the end of a file, on quit, and when you ask, so a question still being
+    /// spoken is transcribed now instead of after the pause. Cluely does this too (`endSegment`).
     public mutating func flush(time: Double) -> [SpeakerClip] {
         [(Speaker.me, me.flush(time: time)), (.them, them.flush(time: time))]
             .compactMap { speaker, clip in clip.map { SpeakerClip(speaker: speaker, clip: $0) } }

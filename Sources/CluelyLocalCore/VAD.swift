@@ -1,13 +1,15 @@
 import Foundation
 
-/// Voice activity settings. The defaults are the ones Cluely 2.1.20 passes to Silero VAD.
+/// Voice activity settings: the ones Cluely 2.1.20 runs Silero VAD with.
+/// Cluely calls `NonRealTimeVAD.new({redemptionMs: 300, preSpeechPadMs: 300})`; the thresholds and the
+/// 400 ms minimum are vad-web's defaults. (vad-web's own defaults for the other two are 1,400 and 800 ms.)
 public struct VADConfig: Equatable, Sendable {
     public var sampleRate = 16_000
     public var frameSamples = 512          // 32 ms, Silero's frame size at 16 kHz
     public var positiveThreshold = 0.3     // a frame at or above this is speech
     public var negativeThreshold = 0.25    // a frame below this counts towards ending the clip
-    public var preSpeechPadMs = 800        // audio kept from before speech started
-    public var redemptionMs = 1_400        // quiet needed before a clip ends
+    public var preSpeechPadMs = 300        // audio kept from before speech started
+    public var redemptionMs = 300          // quiet needed before a clip ends
     public var minSpeechMs = 400           // shorter clips are thrown away as misfires
     public var maxClipMs = 20_000          // hard cap per clip
 
@@ -115,7 +117,8 @@ public struct Segmenter: Sendable {
 }
 
 /// A stand-in for Silero: maps frame loudness above a tracked noise floor to a 0...1 "probability".
-/// 0 at 6 dB above the floor, 1 at 21 dB above it.
+/// 0 at 6 dB above the floor, 1 at 21 dB above it. The floor starts at the first frame's level,
+/// so a noisy room isn't scored as speech while the floor catches up.
 public struct EnergyScorer: Sendable {
     public static let floorLimitDb = -60.0
     public static let startDb = 6.0
@@ -124,6 +127,7 @@ public struct EnergyScorer: Sendable {
     public static let riseRate = 0.002
 
     public private(set) var noiseFloorDb = floorLimitDb
+    private var started = false
 
     public init() {}
 
@@ -135,7 +139,10 @@ public struct EnergyScorer: Sendable {
 
     public mutating func probability(_ frame: [Float]) -> Double {
         let db = Self.rmsDb(frame)
-        if db < noiseFloorDb {
+        if !started {
+            started = true
+            noiseFloorDb = max(db, Self.floorLimitDb)
+        } else if db < noiseFloorDb {
             noiseFloorDb = max(db, Self.floorLimitDb)
         } else {
             noiseFloorDb += (db - noiseFloorDb) * Self.riseRate

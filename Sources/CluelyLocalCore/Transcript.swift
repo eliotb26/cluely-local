@@ -87,8 +87,9 @@ public enum Transcript {
         return nil
     }
 
-    /// The lines from the last `window` seconds before `now`.
+    /// The lines from the last `window` seconds before `now`, in the order they were spoken.
+    /// Lines are written when whisper finishes, so a short reply can land before a longer line said earlier.
     public static func recent(_ lines: [TranscriptLine], now: Date, window: TimeInterval = 300) -> [TranscriptLine] {
-        lines.filter { $0.date <= now && now.timeIntervalSince($0.date) <= window }
+        lines.filter { now.timeIntervalSince($0.date) <= window }.sorted { $0.date < $1.date }
     }
 }

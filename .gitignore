@@ -5,3 +5,4 @@ runs.csv
 transcript.md
 .DS_Store
 .swiftpm/
+__pycache__/
