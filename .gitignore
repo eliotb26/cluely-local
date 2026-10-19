@@ -1,0 +1,7 @@
+.build/
+models/
+bin/
+runs.csv
+transcript.md
+.DS_Store
+.swiftpm/
