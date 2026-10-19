@@ -305,6 +305,7 @@ struct PromptTests {
         let prompt = AskPrompt.build(question: "", transcript: [], screen: .none)
         #expect(prompt.contains("If Them's latest lines ask me something"))
         #expect(prompt.contains("stops mid-sentence"))
+        #expect(prompt.contains("Never state a price, feature, date or promise"))
     }
 
     @Test("each mode adds its own instructions", arguments: Mode.allCases)
